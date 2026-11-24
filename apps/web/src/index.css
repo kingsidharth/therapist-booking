@@ -1,0 +1,340 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.75rem;
+  --background: oklch(0.985 0.002 90);
+  --foreground: oklch(0.22 0.01 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.01 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.01 260);
+  --primary: oklch(0.577 0.245 17);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.965 0.004 90);
+  --secondary-foreground: oklch(0.28 0.01 260);
+  --muted: oklch(0.965 0.004 90);
+  --muted-foreground: oklch(0.48 0.012 260);
+  --accent: oklch(0.96 0.02 17);
+  --accent-foreground: oklch(0.4 0.15 17);
+  --destructive: oklch(0.55 0.22 27);
+  --border: oklch(0.92 0.004 90);
+  --input: oklch(0.9 0.005 90);
+  --ring: oklch(0.65 0.18 17);
+  --success: oklch(0.55 0.13 160);
+  --success-soft: oklch(0.96 0.04 160);
+  --warning-soft: oklch(0.96 0.06 85);
+  --warning: oklch(0.5 0.12 75);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.18 0.005 260);
+    --foreground: oklch(0.96 0.003 90);
+    --card: oklch(0.22 0.006 260);
+    --card-foreground: oklch(0.96 0.003 90);
+    --popover: oklch(0.22 0.006 260);
+    --popover-foreground: oklch(0.96 0.003 90);
+    --primary: oklch(0.65 0.22 17);
+    --primary-foreground: oklch(0.15 0 0);
+    --secondary: oklch(0.27 0.006 260);
+    --secondary-foreground: oklch(0.96 0.003 90);
+    --muted: oklch(0.27 0.006 260);
+    --muted-foreground: oklch(0.72 0.01 260);
+    --accent: oklch(0.3 0.05 17);
+    --accent-foreground: oklch(0.92 0.05 17);
+    --destructive: oklch(0.65 0.2 25);
+    --border: oklch(0.32 0.008 260);
+    --input: oklch(0.36 0.008 260);
+    --ring: oklch(0.65 0.18 17);
+    --success: oklch(0.75 0.14 160);
+    --success-soft: oklch(0.28 0.05 160);
+    --warning-soft: oklch(0.3 0.05 85);
+    --warning: oklch(0.82 0.12 85);
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    color-scheme: light dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family:
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      Roboto,
+      sans-serif;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}
+
+.hatched {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 6px,
+    color-mix(in oklab, var(--muted-foreground) 14%, transparent) 6px 7px
+  );
+}
+
+:root {
+  --background: #f8f8f2;
+  --foreground: #283c37;
+  --card: #fffefa;
+  --card-foreground: #283c37;
+  --popover: #fffefa;
+  --popover-foreground: #283c37;
+  --primary: #285848;
+  --primary-foreground: #fffefa;
+  --secondary: #eff1e8;
+  --secondary-foreground: #354c40;
+  --muted: #eeefe7;
+  --muted-foreground: #627067;
+  --accent: #e6edde;
+  --accent-foreground: #274f40;
+  --border: #d9dfd3;
+  --input: #b9c6b9;
+  --ring: #648570;
+}
+html {
+  color-scheme: light;
+}
+body {
+  font-family:
+    "DM Sans",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+header {
+  background: var(--card);
+}
+.display {
+  font-family: "Baskervville", Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.042em;
+  line-height: 1.12;
+}
+.eyebrow {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #516e59;
+}
+.page-heading {
+  padding: 1.65rem 0 1.6rem;
+}
+.page-heading h1 {
+  font-size: clamp(2.8rem, 6vw, 4.1rem);
+  margin: 0.55rem 0 0.6rem;
+}
+.page-heading p {
+  color: var(--muted-foreground);
+}
+.section-tabs {
+  display: flex;
+  gap: 1.8rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+.section-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.8rem 0.1rem;
+  font-size: 0.88rem;
+  color: var(--muted-foreground);
+  border-bottom: 2px solid transparent;
+}
+.section-tabs svg,
+.profile-line svg,
+.time-tile svg {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+.section-tabs [aria-current] {
+  color: var(--primary);
+  font-weight: 650;
+  border-color: var(--primary);
+}
+.booking-grid {
+  display: grid;
+  grid-template-columns: minmax(15rem, 0.81fr) minmax(0, 1.65fr);
+  gap: 1.35rem;
+  align-items: start;
+}
+.panel {
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 1rem;
+  overflow: hidden;
+}
+.booking-panel {
+  padding: clamp(1rem, 3vw, 2rem);
+}
+.landscape {
+  height: 8.7rem;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: linear-gradient(135deg, #f1e9cb, #e9dfba 60%, #ead5b1);
+}
+.landscape i {
+  position: absolute;
+  display: block;
+}
+.sun-disc {
+  width: 3.25rem;
+  height: 3.25rem;
+  background: #d79866;
+  border-radius: 50%;
+  right: 22%;
+  top: 15%;
+}
+.hill {
+  width: 145%;
+  height: 130%;
+  border-radius: 48% 63% 0 0;
+}
+.far {
+  background: #acb592;
+  left: -20%;
+  top: 59%;
+  transform: rotate(-15deg);
+}
+.near {
+  background: #778f75;
+  left: 10%;
+  top: 76%;
+  transform: rotate(-22deg);
+}
+.front {
+  background:
+    repeating-radial-gradient(
+      ellipse at 25% 130%,
+      transparent 0 9px,
+      #78917b80 10px 11px
+    ),
+    #4a6c59;
+  left: -55%;
+  top: 69%;
+  transform: rotate(15deg);
+}
+.tag {
+  border-radius: 1rem;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  padding: 0.22rem 0.65rem;
+  font-size: 0.72rem;
+}
+.profile-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+  line-height: 1.8;
+}
+.date-tile {
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  display: grid;
+  justify-items: center;
+  gap: 0.2rem;
+  padding: 0.65rem 0;
+  background: #fafbf6;
+}
+.date-tile small {
+  font-size: 0.72rem;
+}
+.date-tile strong {
+  font-size: 1.25rem;
+}
+.date-tile i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+}
+.date-tile .has-times {
+  background: #6a8969;
+}
+.time-tile {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.95rem;
+  border-radius: 0.5rem;
+  border: 1px solid #bccbbb;
+  font-size: 0.84rem;
+  font-weight: 550;
+  color: var(--primary);
+}
+.time-tile:hover,
+.date-tile:hover {
+  background: #eaf0e3;
+}
+.time-tile[aria-pressed="true"],
+.date-tile[aria-pressed="true"] {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+.date-tile[aria-pressed="true"] .has-times {
+  background: #dbe9c6;
+}
+@media (max-width: 760px) {
+  .booking-grid {
+    grid-template-columns: 1fr;
+  }
+  .booking-panel {
+    grid-row: 1;
+  }
+  .page-heading {
+    padding-top: 0.7rem;
+  }
+  .landscape {
+    height: 6rem;
+  }
+}
