@@ -13,6 +13,6 @@
     "seed": "bun run --filter @app/server seed",
     "test": "bun test ./apps ./packages",
     "typecheck": "bun run --filter '*' typecheck",
-    "build": "bun run --filter @app/web build"
+    "build": "bun run --filter @app/web build && bun build apps/server/src/vercel.ts --target=bun --outfile=apps/server/dist/vercel.mjs"
   }
 }

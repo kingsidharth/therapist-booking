@@ -1,4 +1,4 @@
-import { createProductionApp } from "../apps/server/src/production";
+import { createProductionApp } from "./production";
 
 let application: ReturnType<typeof createProductionApp> | undefined;
 
