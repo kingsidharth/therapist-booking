@@ -183,7 +183,7 @@ function SlotCell({ slot, tz, onClick }: { slot: AdminSlot; tz: string; onClick:
       type="button"
       onClick={onClick}
       className={cn(
-        "flex h-full min-h-14 w-full flex-col items-start justify-center gap-0.5 rounded-md border px-2 py-1 text-left text-xs transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        "flex h-full min-h-14 w-full min-w-0 overflow-hidden flex-col items-start justify-center gap-0.5 rounded-md border px-2 py-1 text-left text-xs transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
         STATUS_STYLE[slot.status],
       )}
     >
@@ -194,8 +194,8 @@ function SlotCell({ slot, tz, onClick }: { slot: AdminSlot; tz: string; onClick:
         {slot.status === "booked" && slot.booking?.notes && <StickyNote className="ml-auto size-3 shrink-0" aria-label="Has notes" />}
         {slot.status === "booked" && (slot.booking?.rescheduleCount ?? 0) > 0 && <RefreshCw className="size-3 shrink-0" aria-label="Rescheduled" />}
       </span>
-      {sub && <span className="truncate opacity-80">{sub}</span>}
-      {slot.status === "booked" && slot.booking && <span className="truncate opacity-70">booked {relativeTime(slot.booking.createdAt)}</span>}
+      {sub && <span className="w-full truncate opacity-80">{sub}</span>}
+      {slot.status === "booked" && slot.booking && <span className="w-full truncate opacity-70">booked {relativeTime(slot.booking.createdAt)}</span>}
     </button>
   );
 }

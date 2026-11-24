@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Header } from "@/components/Header";
 import { ClientView } from "@/views/ClientView";
 import { TherapistView } from "@/views/TherapistView";
+import { AdminKeyGate } from "@/components/AdminKeyGate";
 import { usePath } from "@/hooks/use-path";
 import { useTherapist } from "@/lib/queries";
 
@@ -22,7 +23,13 @@ export default function App() {
       <div className="min-h-dvh overflow-x-hidden">
         <Header isTherapist={isTherapist} />
         <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-6 sm:px-6">
-          {isTherapist ? <TherapistView /> : <ClientView />}
+          {isTherapist ? (
+            <AdminKeyGate>
+              <TherapistView />
+            </AdminKeyGate>
+          ) : (
+            <ClientView />
+          )}
         </main>
       </div>
       <Toaster position="top-center" />
