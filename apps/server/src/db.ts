@@ -1,10 +1,7 @@
-import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-
-export type DB = Database;
+import type { Client, InStatement, InValue, Transaction } from "@libsql/client";
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS schedule_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS therapist (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -88,17 +85,64 @@ CREATE TABLE IF NOT EXISTS booking_events (
 CREATE INDEX IF NOT EXISTS idx_events_at ON booking_events(at DESC);
 `;
 
-export function openDb(path: string): DB {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  const db = new Database(path, { create: true });
-  db.exec("PRAGMA journal_mode = WAL;");
-  db.exec("PRAGMA foreign_keys = ON;");
-  db.exec("PRAGMA busy_timeout = 5000;");
-  db.exec(SCHEMA);
-  return db;
+
+/** Carries the current SQL executor explicitly so every statement uses its caller's transaction. */
+export class DB {
+  private nextWrite: Promise<void> = Promise.resolve();
+
+  constructor(private client: Client, private tx?: Transaction) {}
+
+  query(sql: string) {
+    const execute = (...args: InValue[]) => (this.tx ?? this.client).execute({ sql, args });
+    return {
+      get: async (...args: InValue[]): Promise<unknown> => (await execute(...args)).rows[0] ?? null,
+      all: async (...args: InValue[]): Promise<unknown[]> => (await execute(...args)).rows,
+      run: async (...args: InValue[]) => ({ changes: (await execute(...args)).rowsAffected }),
+    };
+  }
+
+  prepare(sql: string) { return this.query(sql); }
+
+  exec(sql: string) { return (this.tx ?? this.client).execute(sql); }
+
+  batch(statements: InStatement[]) {
+    return this.tx ? this.tx.batch(statements) : this.client.batch(statements, "write");
+  }
+
+  async write<T>(fn: (db: DB) => Promise<T>): Promise<T> {
+    if (this.tx) return fn(this);
+    // Local connections cannot wait on another transaction in the same JS event loop.
+    // Queue writers on this client; the database still arbitrates writers on other instances.
+    const pending = this.nextWrite.then(() => this.transact(fn));
+    this.nextWrite = pending.then(() => {}, () => {});
+    return pending;
+  }
+
+  private async transact<T>(fn: (db: DB) => Promise<T>): Promise<T> {
+    const tx = await this.client.transaction("write");
+    try {
+      const result = await fn(new DB(this.client, tx));
+      await tx.commit();
+      return result;
+    } finally {
+      tx.close();
+    }
+  }
+
+  close() { this.client.close(); }
 }
 
-export function isEmpty(db: DB): boolean {
-  const row = db.query("SELECT COUNT(*) AS n FROM therapist").get() as { n: number };
+export async function initializeDb(client: Client): Promise<DB> {
+  try {
+    await client.executeMultiple(SCHEMA);
+    return new DB(client);
+  } catch (error) {
+    client.close();
+    throw error;
+  }
+}
+
+export async function isEmpty(db: DB): Promise<boolean> {
+  const row = await db.query("SELECT COUNT(*) AS n FROM therapist").get() as { n: number };
   return row.n === 0;
 }

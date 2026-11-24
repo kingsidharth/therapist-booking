@@ -18,11 +18,13 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import type { ZodError, ZodTypeAny, z } from "zod";
 import type { DB } from "./db";
+import { handleMcp } from "./mcp";
 import { AppError } from "./errors";
 import * as svc from "./service";
 
 export interface AppDeps {
   db: DB;
+  refreshSchedule?: () => Promise<void>;
   adminKey?: string | undefined;
   /** Injectable clock (tests). */
   now?: () => Date;
@@ -52,67 +54,72 @@ export function createApp(deps: AppDeps) {
   const { db } = deps;
   const clock = deps.now ?? (() => new Date());
   const mk = (): svc.Ctx => ({ db, now: clock() });
-  const clientOf = (c: Context, ctx: svc.Ctx) => svc.requireClient(ctx, c.req.header(CLIENT_HEADER));
+  const clientOf = async (c: Context, ctx: svc.Ctx) => await svc.requireClient(ctx, c.req.header(CLIENT_HEADER));
 
   const app = new Hono()
-    .use("*", cors({ origin: (o) => o ?? "*", allowHeaders: ["Content-Type", "Authorization", CLIENT_HEADER], allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] }))
+    .use("*", cors({ origin: (o) => o ?? "*", allowHeaders: ["Content-Type", "Authorization", "MCP-Protocol-Version", CLIENT_HEADER], allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] }))
+
+    .use("/api/*", async (_c, next) => {
+      await deps.refreshSchedule?.();
+      await next();
+    })
 
     // ---- dev / public ----
     .get("/api/health", (c) => c.json({ ok: true as const }))
-    .get("/api/therapist", (c) => c.json(svc.getTherapist(mk())))
-    .get("/api/slots", validate("query", rangeQuerySchema), (c) => {
+    .get("/api/therapist", async (c) => c.json(await svc.getTherapist(mk())))
+    .get("/api/slots", validate("query", rangeQuerySchema), async (c) => {
       const { from, to } = c.req.valid("query");
       const ctx = mk();
-      const slots = svc.listPublicSlots(ctx, from, to, c.req.header(CLIENT_HEADER));
+      const slots = await svc.listPublicSlots(ctx, from, to, c.req.header(CLIENT_HEADER));
       return c.json({ slots });
     })
-    .post("/api/identify", validate("json", identifySchema), (c) => {
-      const client = svc.identify(mk(), c.req.valid("json"));
+    .post("/api/identify", validate("json", identifySchema), async (c) => {
+      const client = await svc.identify(mk(), c.req.valid("json"));
       return c.json({ client });
     })
 
     // ---- client ----
-    .get("/api/me", (c) => {
+    .get("/api/me", async (c) => {
       const ctx = mk();
-      return c.json({ client: clientOf(c, ctx) });
+      return c.json({ client: await clientOf(c, ctx) });
     })
-    .patch("/api/me", validate("json", updateMeSchema), (c) => {
+    .patch("/api/me", validate("json", updateMeSchema), async (c) => {
       const ctx = mk();
-      const me = clientOf(c, ctx);
-      return c.json({ client: svc.updateMe(ctx, me.id, c.req.valid("json").name) });
+      const me = await clientOf(c, ctx);
+      return c.json({ client: await svc.updateMe(ctx, me.id, c.req.valid("json").name) });
     })
-    .get("/api/me/bookings", (c) => {
+    .get("/api/me/bookings", async (c) => {
       const ctx = mk();
-      const me = clientOf(c, ctx);
-      return c.json(svc.myBookings(ctx, me.id));
+      const me = await clientOf(c, ctx);
+      return c.json(await svc.myBookings(ctx, me.id));
     })
-    .post("/api/holds", validate("json", createHoldSchema), (c) => {
+    .post("/api/holds", validate("json", createHoldSchema), async (c) => {
       const ctx = mk();
-      const me = clientOf(c, ctx);
-      return c.json({ hold: svc.createHold(ctx, me.id, c.req.valid("json").slotId) }, 201);
+      const me = await clientOf(c, ctx);
+      return c.json({ hold: await svc.createHold(ctx, me.id, c.req.valid("json").slotId) }, 201);
     })
-    .delete("/api/holds/:slotId", (c) => {
+    .delete("/api/holds/:slotId", async (c) => {
       const ctx = mk();
-      const me = clientOf(c, ctx);
-      svc.releaseHold(ctx, me.id, c.req.param("slotId"));
+      const me = await clientOf(c, ctx);
+      await svc.releaseHold(ctx, me.id, c.req.param("slotId"));
       return c.body(null, 204);
     })
-    .post("/api/bookings", validate("json", createBookingSchema), (c) => {
+    .post("/api/bookings", validate("json", createBookingSchema), async (c) => {
       const ctx = mk();
-      const me = clientOf(c, ctx);
-      return c.json({ booking: svc.createBooking(ctx, me.id, c.req.valid("json")) }, 201);
+      const me = await clientOf(c, ctx);
+      return c.json({ booking: await svc.createBooking(ctx, me.id, c.req.valid("json")) }, 201);
     })
-    .post("/api/bookings/:id/reschedule", validate("json", rescheduleBookingSchema), (c) => {
+    .post("/api/bookings/:id/reschedule", validate("json", rescheduleBookingSchema), async (c) => {
       const ctx = mk();
-      const me = clientOf(c, ctx);
-      const booking = svc.rescheduleBooking(ctx, me.id, c.req.param("id"), c.req.valid("json").newSlotId);
+      const me = await clientOf(c, ctx);
+      const booking = await svc.rescheduleBooking(ctx, me.id, c.req.param("id"), c.req.valid("json").newSlotId);
       return c.json({ booking });
     })
     .post("/api/bookings/:id/cancel", async (c) => {
       const ctx = mk();
-      const me = clientOf(c, ctx);
+      const me = await clientOf(c, ctx);
       const body = await optionalBody(c, cancelBookingSchema);
-      const booking = svc.cancelBooking(ctx, { kind: "client", clientId: me.id }, c.req.param("id"), body.reason);
+      const booking = await svc.cancelBooking(ctx, { kind: "client", clientId: me.id }, c.req.param("id"), body.reason);
       return c.json({ booking });
     })
 
@@ -124,25 +131,27 @@ export function createApp(deps: AppDeps) {
       c.header("Cache-Control", "no-store");
       await next();
     })
-    .get("/api/admin/schedule", validate("query", rangeQuerySchema), (c) => {
+    .get("/api/admin/schedule", validate("query", rangeQuerySchema), async (c) => {
       const { from, to } = c.req.valid("query");
-      return c.json(svc.adminSchedule(mk(), from, to));
+      return c.json(await svc.adminSchedule(mk(), from, to));
     })
     .post("/api/admin/slots/:id/block", async (c) => {
       const body = await optionalBody(c, blockSlotSchema);
-      return c.json({ slot: svc.adminBlockSlot(mk(), c.req.param("id"), body.reason) });
+      return c.json({ slot: await svc.adminBlockSlot(mk(), c.req.param("id"), body.reason) });
     })
-    .post("/api/admin/slots/:id/unblock", (c) => c.json({ slot: svc.adminUnblockSlot(mk(), c.req.param("id")) }))
+    .post("/api/admin/slots/:id/unblock", async (c) => c.json({ slot: await svc.adminUnblockSlot(mk(), c.req.param("id")) }))
     .post("/api/admin/bookings/:id/cancel", async (c) => {
       const body = await optionalBody(c, cancelBookingSchema);
-      const booking = svc.cancelBooking(mk(), { kind: "therapist" }, c.req.param("id"), body.reason);
+      const booking = await svc.cancelBooking(mk(), { kind: "therapist" }, c.req.param("id"), body.reason);
       return c.json({ booking });
     })
-    .get("/api/admin/clients", (c) => c.json({ clients: svc.adminClients(mk()) }))
-    .get("/api/admin/events", (c) => {
+    .get("/api/admin/clients", async (c) => c.json({ clients: await svc.adminClients(mk()) }))
+    .get("/api/admin/events", async (c) => {
       const n = Number(c.req.query("limit") ?? 50);
-      return c.json({ events: svc.adminEvents(mk(), Number.isFinite(n) && n > 0 ? Math.floor(n) : 50) });
+      return c.json({ events: await svc.adminEvents(mk(), Number.isFinite(n) && n > 0 ? Math.floor(n) : 50) });
     });
+
+  app.all("/api/mcp", c => handleMcp(c.req.raw, (path, init) => app.request(path, init), deps.adminKey));
 
   const errorBody = (code: ErrorCode, message: string): ApiErrorBody => ({ error: { code, message } });
 

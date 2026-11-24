@@ -1,5 +1,6 @@
 import { createApp } from "../src/app";
-import { openDb, type DB } from "../src/db";
+import { openDb } from "../src/local-db";
+import type { DB } from "../src/db";
 import { extendHorizon } from "../src/schedule";
 import { seedBase } from "../src/seed";
 import * as svc from "../src/service";
@@ -8,28 +9,28 @@ import { AppError } from "../src/errors";
 /** Tue 2026-11-24 10:00 America/New_York. */
 export const T0 = new Date("2026-11-24T15:00:00.000Z");
 
-export function setup(now: Date = T0) {
-  const db = openDb(":memory:");
-  seedBase(db);
-  extendHorizon(db, now);
+export async function setup(now: Date = T0) {
+  const db = await openDb(":memory:");
+  await seedBase(db);
+  await extendHorizon(db, now);
   const clock = { now: new Date(now) };
   const ctx = (): svc.Ctx => ({ db, now: new Date(clock.now) });
   const app = createApp({ db, now: () => new Date(clock.now) });
-  const client = (contact: string, name?: string) => svc.identify(ctx(), { contact, name });
+  const client = async (contact: string, name?: string) => await svc.identify(ctx(), { contact, name });
   const advance = (ms: number) => (clock.now = new Date(clock.now.getTime() + ms));
   return { db, clock, ctx, app, client, advance };
 }
 
 /** Slot id for a UTC start instant, asserting it exists. */
-export function slotId(db: DB, startIso: string): string {
-  const r = db.query("SELECT id FROM slots WHERE start_at = ?").get(startIso) as { id: string } | null;
+export async function slotId(db: DB, startIso: string): Promise<string> {
+  const r = await db.query("SELECT id FROM slots WHERE start_at = ?").get(startIso) as { id: string } | null;
   if (!r) throw new Error("no slot at " + startIso);
   return r.id;
 }
 
-export function codeOf(fn: () => unknown): string | undefined {
+export async function codeOf(fn: () => unknown): Promise<string | undefined> {
   try {
-    fn();
+    await fn();
   } catch (e) {
     if (e instanceof AppError) return e.code;
     throw e;

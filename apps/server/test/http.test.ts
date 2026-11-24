@@ -12,7 +12,7 @@ const json = (body: unknown, headers: Record<string, string> = {}) => ({
 
 describe("http", () => {
   test("therapist endpoints require the configured key", async () => {
-    const { app, db } = setup();
+    const { app, db } = await setup();
     const authorized = { headers: { Authorization: "Bearer test-key" } };
     expect((await app.request("/api/admin/clients", authorized)).status).toBe(403);
     const secured = createApp({ db, adminKey: "test-key" });
@@ -22,7 +22,7 @@ describe("http", () => {
   });
 
   test("health and therapist", async () => {
-    const { app } = setup();
+    const { app } = await setup();
     expect(await j(await app.request("/api/health"))).toEqual({ ok: true });
     const t = await j(await app.request("/api/therapist"));
     expect(t.therapist.timezone).toBe("America/New_York");
@@ -30,7 +30,7 @@ describe("http", () => {
   });
 
   test("validation failure -> 400 VALIDATION with readable message", async () => {
-    const { app } = setup();
+    const { app } = await setup();
     const res = await app.request("/api/identify", json({ contact: "nope" }));
     expect(res.status).toBe(400);
     const body = await j(res);
@@ -41,18 +41,18 @@ describe("http", () => {
   });
 
   test("missing client header -> 401 UNIDENTIFIED", async () => {
-    const { app } = setup();
+    const { app } = await setup();
     const res = await app.request("/api/me/bookings");
     expect(res.status).toBe(401);
     expect((await j(res)).error.code).toBe("UNIDENTIFIED");
   });
 
   test("full flow + 409 SLOT_UNAVAILABLE + 404", async () => {
-    const { app, db } = setup();
+    const { app, db } = await setup();
     const id = async (c: string) => (await j(await app.request("/api/identify", json({ contact: c })))).client.id as string;
     const a = await id("a@example.com");
     const b = await id("b@example.com");
-    const s = slotId(db, MON_9);
+    const s = await slotId(db, MON_9);
     const h = await app.request("/api/holds", json({ slotId: s }, { [CLIENT_HEADER]: a }));
     expect(h.status).toBe(201);
     const conflict = await app.request("/api/holds", json({ slotId: s }, { [CLIENT_HEADER]: b }));

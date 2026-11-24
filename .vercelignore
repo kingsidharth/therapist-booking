@@ -1,0 +1,10 @@
+.env
+.env.*
+**/.env
+**/.env.*
+apps/server/data/
+**/*.sqlite*
+**/*.db
+**/*.db-*
+**/node_modules/
+**/dist/

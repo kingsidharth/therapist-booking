@@ -5,7 +5,10 @@ dist
 *.db
 *.db-*
 .env
+.env.*
+.vercel/
 .DS_Store
 *.log
 
 /apps/server/data/admin-key
+/apps/server/data/production-admin-key

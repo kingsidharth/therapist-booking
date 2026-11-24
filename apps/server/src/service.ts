@@ -86,8 +86,8 @@ const iso = (d: Date) => d.toISOString();
 const uid = (prefix: string) => `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
 
 /** BEGIN IMMEDIATE transaction; throwing rolls back. */
-function tx<T>(ctx: Ctx, fn: () => T): T {
-  return ctx.db.transaction(fn).immediate();
+function tx<T>(ctx: Ctx, fn: (ctx: Ctx) => Promise<T>): Promise<T> {
+  return ctx.db.write(db => fn({ ...ctx, db }));
 }
 
 // ---------------------------------------------------------------------------
@@ -95,8 +95,8 @@ function tx<T>(ctx: Ctx, fn: () => T): T {
 // ---------------------------------------------------------------------------
 
 /** Turn expired holds back into open inventory. Returns how many were released. */
-export function sweepExpiredHolds(ctx: Ctx): number {
-  const res = ctx.db
+export async function sweepExpiredHolds(ctx: Ctx): Promise<number> {
+  const res = await ctx.db
     .query(
       `UPDATE slots SET prev_hold_client_id = held_by_client_id, status = 'open',
          held_by_client_id = NULL, hold_expires_at = NULL, version = version + 1
@@ -110,8 +110,8 @@ export function sweepExpiredHolds(ctx: Ctx): number {
 // Therapist
 // ---------------------------------------------------------------------------
 
-export function getTherapist(ctx: Ctx): { therapist: Therapist; timeOff: TimeOff[] } {
-  const r = ctx.db.query("SELECT * FROM therapist LIMIT 1").get() as {
+export async function getTherapist(ctx: Ctx): Promise<{ therapist: Therapist; timeOff: TimeOff[] }> {
+  const r = await ctx.db.query("SELECT * FROM therapist LIMIT 1").get() as {
     id: string;
     name: string;
     credentials: string;
@@ -122,7 +122,7 @@ export function getTherapist(ctx: Ctx): { therapist: Therapist; timeOff: TimeOff
   } | null;
   if (!r) fail("NOT_FOUND", "No therapist has been set up yet.");
   const timeOff = (
-    ctx.db.query("SELECT id, start_date, end_date, reason FROM time_off ORDER BY start_date").all() as {
+    await ctx.db.query("SELECT id, start_date, end_date, reason FROM time_off ORDER BY start_date").all() as {
       id: string;
       start_date: string;
       end_date: string;
@@ -138,7 +138,7 @@ export function getTherapist(ctx: Ctx): { therapist: Therapist; timeOff: TimeOff
       specialties: JSON.parse(r.specialties_json) as string[],
       timezone: r.timezone,
       location: r.location,
-      policies: getPolicies(ctx.db),
+      policies: await getPolicies(ctx.db),
     },
     timeOff,
   };
@@ -148,14 +148,14 @@ export function getTherapist(ctx: Ctx): { therapist: Therapist; timeOff: TimeOff
 // Clients
 // ---------------------------------------------------------------------------
 
-export function identify(ctx: Ctx, input: { contact: string; name?: string | undefined }): Client {
+export async function identify(ctx: Ctx, input: { contact: string; name?: string | undefined }): Promise<Client> {
   const norm = normalizeContact(input.contact);
   if (!norm) fail("VALIDATION", "Enter a valid email or phone number.");
-  return tx(ctx, () => {
-    const existing = ctx.db.query("SELECT * FROM clients WHERE contact = ?").get(norm.contact) as ClientRow | null;
+  return tx(ctx, async (ctx) => {
+    const existing = await ctx.db.query("SELECT * FROM clients WHERE contact = ?").get(norm.contact) as ClientRow | null;
     if (existing) {
       if (input.name && input.name !== existing.name) {
-        ctx.db.query("UPDATE clients SET name = ? WHERE id = ?").run(input.name, existing.id);
+        await ctx.db.query("UPDATE clients SET name = ? WHERE id = ?").run(input.name, existing.id);
         existing.name = input.name;
       }
       return toClient(existing);
@@ -167,23 +167,23 @@ export function identify(ctx: Ctx, input: { contact: string; name?: string | und
       name: input.name ?? null,
       created_at: iso(ctx.now),
     };
-    ctx.db
+    await ctx.db
       .query("INSERT INTO clients (id, contact, contact_type, name, created_at) VALUES (?, ?, ?, ?, ?)")
       .run(row.id, row.contact, row.contact_type, row.name, row.created_at);
     return toClient(row);
   });
 }
 
-export function requireClient(ctx: Ctx, clientId: string | undefined | null): Client {
+export async function requireClient(ctx: Ctx, clientId: string | undefined | null): Promise<Client> {
   const row = clientId
-    ? (ctx.db.query("SELECT * FROM clients WHERE id = ?").get(clientId) as ClientRow | null)
+    ? (await ctx.db.query("SELECT * FROM clients WHERE id = ?").get(clientId) as ClientRow | null)
     : null;
   if (!row) fail("UNIDENTIFIED", "Please enter your email or phone number to continue.");
   return toClient(row);
 }
 
-export function updateMe(ctx: Ctx, clientId: string, name: string): Client {
-  ctx.db.query("UPDATE clients SET name = ? WHERE id = ?").run(name, clientId);
+export async function updateMe(ctx: Ctx, clientId: string, name: string): Promise<Client> {
+  await ctx.db.query("UPDATE clients SET name = ? WHERE id = ?").run(name, clientId);
   return requireClient(ctx, clientId);
 }
 
@@ -200,12 +200,12 @@ export function clampRange(from: string, to: string): { from: string; to: string
   return { from: iso(f), to: iso(t) };
 }
 
-export function listPublicSlots(ctx: Ctx, from: string, to: string, clientId?: string | null): PublicSlot[] {
-  sweepExpiredHolds(ctx);
+export async function listPublicSlots(ctx: Ctx, from: string, to: string, clientId?: string | null): Promise<PublicSlot[]> {
+  await sweepExpiredHolds(ctx);
   const range = clampRange(from, to);
-  const policies = getPolicies(ctx.db);
+  const policies = await getPolicies(ctx.db);
   const earliest = ctx.now.getTime() + policies.minLeadHours * HOUR;
-  const rows = ctx.db
+  const rows = await ctx.db
     .query(
       `SELECT s.id, s.start_at, s.end_at, s.status, s.held_by_client_id,
          (SELECT b.client_id FROM bookings b WHERE b.slot_id = s.id AND b.status = 'confirmed') AS booked_by
@@ -225,8 +225,8 @@ export function listPublicSlots(ctx: Ctx, from: string, to: string, clientId?: s
 // Slot helpers
 // ---------------------------------------------------------------------------
 
-function getSlot(ctx: Ctx, slotId: string): SlotRow | null {
-  return ctx.db.query("SELECT * FROM slots WHERE id = ?").get(slotId) as SlotRow | null;
+async function getSlot(ctx: Ctx, slotId: string): Promise<SlotRow | null> {
+  return await ctx.db.query("SELECT * FROM slots WHERE id = ?").get(slotId) as SlotRow | null;
 }
 
 /** Throws unless `slot` can be taken by `clientId` right now (open, or held by them). */
@@ -255,8 +255,8 @@ function assertTakeable(
   }
 }
 
-function releaseOtherHolds(ctx: Ctx, clientId: string, exceptSlotId: string | null) {
-  ctx.db
+async function releaseOtherHolds(ctx: Ctx, clientId: string, exceptSlotId: string | null) {
+  await ctx.db
     .query(
       `UPDATE slots SET status = 'open', held_by_client_id = NULL, hold_expires_at = NULL, version = version + 1
        WHERE status = 'held' AND held_by_client_id = ? AND id IS NOT ?`,
@@ -264,7 +264,7 @@ function releaseOtherHolds(ctx: Ctx, clientId: string, exceptSlotId: string | nu
     .run(clientId, exceptSlotId);
 }
 
-function logEvent(
+async function logEvent(
   ctx: Ctx,
   e: {
     type: BookingEventType;
@@ -275,7 +275,7 @@ function logEvent(
     actor: "client" | "therapist" | "system";
   },
 ) {
-  ctx.db
+  await ctx.db
     .query(
       `INSERT INTO booking_events (id, type, booking_id, slot_id, from_slot_id, client_id, actor, at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -303,24 +303,24 @@ const toHold = (s: SlotRow): Hold => ({
   expiresAt: s.hold_expires_at!,
 });
 
-export function createHold(ctx: Ctx, clientId: string, slotId: string): Hold {
-  const policies = getPolicies(ctx.db);
-  return tx(ctx, () => {
-    sweepExpiredHolds(ctx);
-    const slot = getSlot(ctx, slotId);
+export async function createHold(ctx: Ctx, clientId: string, slotId: string): Promise<Hold> {
+  const policies = await getPolicies(ctx.db);
+  return tx(ctx, async (ctx) => {
+    await sweepExpiredHolds(ctx);
+    const slot = await getSlot(ctx, slotId);
     assertTakeable(ctx, slot, clientId, policies, { explainExpiry: false });
     const expires = iso(new Date(ctx.now.getTime() + policies.holdMinutes * 60_000));
     if (slot.status === "held") {
       // Re-holding your own slot just extends it.
-      ctx.db
+      await ctx.db
         .query(
           `UPDATE slots SET hold_expires_at = ?, version = version + 1
            WHERE id = ? AND status = 'held' AND held_by_client_id = ?`,
         )
         .run(expires, slotId, clientId);
     } else {
-      releaseOtherHolds(ctx, clientId, slotId);
-      const res = ctx.db
+      await releaseOtherHolds(ctx, clientId, slotId);
+      const res = await ctx.db
         .query(
           `UPDATE slots SET status = 'held', held_by_client_id = ?, hold_expires_at = ?,
              prev_hold_client_id = CASE WHEN prev_hold_client_id = ? THEN NULL ELSE prev_hold_client_id END,
@@ -330,12 +330,12 @@ export function createHold(ctx: Ctx, clientId: string, slotId: string): Hold {
         .run(clientId, expires, clientId, slotId);
       if (res.changes !== 1) fail("SLOT_UNAVAILABLE", "Sorry — someone just took that time. Please pick another slot.");
     }
-    return toHold(getSlot(ctx, slotId)!);
+    return toHold((await getSlot(ctx, slotId))!);
   });
 }
 
-export function releaseHold(ctx: Ctx, clientId: string, slotId: string): void {
-  ctx.db
+export async function releaseHold(ctx: Ctx, clientId: string, slotId: string): Promise<void> {
+  await ctx.db
     .query(
       `UPDATE slots SET status = 'open', held_by_client_id = NULL, hold_expires_at = NULL, version = version + 1
        WHERE id = ? AND status = 'held' AND held_by_client_id = ?`,
@@ -343,8 +343,8 @@ export function releaseHold(ctx: Ctx, clientId: string, slotId: string): void {
     .run(slotId, clientId);
 }
 
-function activeHold(ctx: Ctx, clientId: string): Hold | null {
-  const s = ctx.db
+async function activeHold(ctx: Ctx, clientId: string): Promise<Hold | null> {
+  const s = await ctx.db
     .query(
       `SELECT * FROM slots WHERE status = 'held' AND held_by_client_id = ? AND hold_expires_at > ?
        ORDER BY hold_expires_at DESC LIMIT 1`,
@@ -375,20 +375,20 @@ function toBooking(ctx: Ctx, r: BookingJoin, policies: BookingPolicies): Booking
   };
 }
 
-function getBookingRow(ctx: Ctx, id: string): BookingJoin | null {
-  return ctx.db
+async function getBookingRow(ctx: Ctx, id: string): Promise<BookingJoin | null> {
+  return await ctx.db
     .query(
       `SELECT b.*, s.start_at, s.end_at FROM bookings b JOIN slots s ON s.id = b.slot_id WHERE b.id = ?`,
     )
     .get(id) as BookingJoin | null;
 }
 
-function bookingDto(ctx: Ctx, id: string): Booking {
-  return toBooking(ctx, getBookingRow(ctx, id)!, getPolicies(ctx.db));
+async function bookingDto(ctx: Ctx, id: string, policies: BookingPolicies): Promise<Booking> {
+  return toBooking(ctx, (await getBookingRow(ctx, id))!, policies);
 }
 
-function countActiveBookings(ctx: Ctx, clientId: string): number {
-  const r = ctx.db
+async function countActiveBookings(ctx: Ctx, clientId: string): Promise<number> {
+  const r = await ctx.db
     .query(
       `SELECT COUNT(*) AS n FROM bookings b JOIN slots s ON s.id = b.slot_id
        WHERE b.client_id = ? AND b.status = 'confirmed' AND s.start_at >= ?`,
@@ -398,8 +398,8 @@ function countActiveBookings(ctx: Ctx, clientId: string): number {
 }
 
 /** Claim a slot for a booking: open, or held by this client. */
-function claimSlotForBooking(ctx: Ctx, slotId: string, clientId: string) {
-  const res = ctx.db
+async function claimSlotForBooking(ctx: Ctx, slotId: string, clientId: string) {
+  const res = await ctx.db
     .query(
       `UPDATE slots SET status = 'booked', held_by_client_id = NULL, hold_expires_at = NULL,
          prev_hold_client_id = NULL, version = version + 1
@@ -409,42 +409,42 @@ function claimSlotForBooking(ctx: Ctx, slotId: string, clientId: string) {
   if (res.changes !== 1) fail("SLOT_UNAVAILABLE", "Sorry — someone just booked that time. Please pick another slot.");
 }
 
-export function createBooking(
+export async function createBooking(
   ctx: Ctx,
   clientId: string,
   input: { slotId: string; notes?: string | undefined },
-): Booking {
-  const policies = getPolicies(ctx.db);
+): Promise<Booking> {
+  const policies = await getPolicies(ctx.db);
   const id = uid("bk");
-  tx(ctx, () => {
-    sweepExpiredHolds(ctx);
-    const slot = getSlot(ctx, input.slotId);
+  return tx(ctx, async (ctx) => {
+    await sweepExpiredHolds(ctx);
+    const slot = await getSlot(ctx, input.slotId);
     assertTakeable(ctx, slot, clientId, policies, { explainExpiry: true });
-    if (countActiveBookings(ctx, clientId) >= policies.maxActiveBookings) {
+    if (await countActiveBookings(ctx, clientId) >= policies.maxActiveBookings) {
       fail(
         "LIMIT_REACHED",
         `You can have up to ${policies.maxActiveBookings} upcoming sessions. Cancel one to book another.`,
       );
     }
-    claimSlotForBooking(ctx, input.slotId, clientId);
-    releaseOtherHolds(ctx, clientId, null);
+    await claimSlotForBooking(ctx, input.slotId, clientId);
+    await releaseOtherHolds(ctx, clientId, null);
     const now = iso(ctx.now);
-    ctx.db
+    await ctx.db
       .query(
         `INSERT INTO bookings (id, slot_id, client_id, status, notes, reschedule_count, created_at, updated_at)
          VALUES (?, ?, ?, 'confirmed', ?, 0, ?, ?)`,
       )
       .run(id, input.slotId, clientId, input.notes || null, now, now);
-    logEvent(ctx, { type: "booked", bookingId: id, slotId: input.slotId, clientId, actor: "client" });
+    await logEvent(ctx, { type: "booked", bookingId: id, slotId: input.slotId, clientId, actor: "client" });
+    return bookingDto(ctx, id, policies);
   });
-  return bookingDto(ctx, id);
 }
 
-export function rescheduleBooking(ctx: Ctx, clientId: string, bookingId: string, newSlotId: string): Booking {
-  const policies = getPolicies(ctx.db);
-  tx(ctx, () => {
-    sweepExpiredHolds(ctx);
-    const booking = getBookingRow(ctx, bookingId);
+export async function rescheduleBooking(ctx: Ctx, clientId: string, bookingId: string, newSlotId: string): Promise<Booking> {
+  const policies = await getPolicies(ctx.db);
+  return tx(ctx, async (ctx) => {
+    await sweepExpiredHolds(ctx);
+    const booking = await getBookingRow(ctx, bookingId);
     if (!booking) fail("NOT_FOUND", "We couldn't find that booking.");
     if (booking.client_id !== clientId) fail("FORBIDDEN", "That booking belongs to someone else.");
     if (booking.status !== "confirmed") fail("INVALID_STATE", "This booking has already been cancelled.");
@@ -456,23 +456,23 @@ export function rescheduleBooking(ctx: Ctx, clientId: string, bookingId: string,
       );
     }
     if (newSlotId === booking.slot_id) fail("INVALID_STATE", "You're already booked at that time.");
-    const slot = getSlot(ctx, newSlotId);
+    const slot = await getSlot(ctx, newSlotId);
     assertTakeable(ctx, slot, clientId, policies, { explainExpiry: true });
-    claimSlotForBooking(ctx, newSlotId, clientId);
-    const freed = ctx.db
+    await claimSlotForBooking(ctx, newSlotId, clientId);
+    const freed = await ctx.db
       .query(
         `UPDATE slots SET status = 'open', version = version + 1 WHERE id = ? AND status = 'booked'`,
       )
       .run(booking.slot_id);
     if (freed.changes !== 1) fail("INVALID_STATE", "Couldn't release the original time. Please try again.");
-    ctx.db
+    await ctx.db
       .query(
         `UPDATE bookings SET slot_id = ?, reschedule_count = reschedule_count + 1, updated_at = ?
          WHERE id = ? AND status = 'confirmed'`,
       )
       .run(newSlotId, iso(ctx.now), bookingId);
-    releaseOtherHolds(ctx, clientId, null);
-    logEvent(ctx, {
+    await releaseOtherHolds(ctx, clientId, null);
+    await logEvent(ctx, {
       type: "rescheduled",
       bookingId,
       slotId: newSlotId,
@@ -480,19 +480,19 @@ export function rescheduleBooking(ctx: Ctx, clientId: string, bookingId: string,
       clientId,
       actor: "client",
     });
+    return bookingDto(ctx, bookingId, policies);
   });
-  return bookingDto(ctx, bookingId);
 }
 
-export function cancelBooking(
+export async function cancelBooking(
   ctx: Ctx,
   actor: { kind: "client"; clientId: string } | { kind: "therapist" },
   bookingId: string,
   reason?: string,
-): Booking {
-  const policies = getPolicies(ctx.db);
-  tx(ctx, () => {
-    const booking = getBookingRow(ctx, bookingId);
+): Promise<Booking> {
+  const policies = await getPolicies(ctx.db);
+  return tx(ctx, async (ctx) => {
+    const booking = await getBookingRow(ctx, bookingId);
     if (!booking) fail("NOT_FOUND", "We couldn't find that booking.");
     if (actor.kind === "client" && booking.client_id !== actor.clientId) {
       fail("FORBIDDEN", "That booking belongs to someone else.");
@@ -506,14 +506,14 @@ export function cancelBooking(
       );
     }
     const now = iso(ctx.now);
-    ctx.db
+    await ctx.db
       .query(
         `UPDATE bookings SET status = 'cancelled', cancelled_at = ?, cancel_reason = ?, updated_at = ?
          WHERE id = ? AND status = 'confirmed'`,
       )
       .run(now, reason || null, now, bookingId);
     const actorName = actor.kind === "client" ? "client" : "therapist";
-    logEvent(ctx, {
+    await logEvent(ctx, {
       type: "cancelled",
       bookingId,
       slotId: booking.slot_id,
@@ -521,24 +521,24 @@ export function cancelBooking(
       actor: actorName,
     });
     if (start > ctx.now.getTime()) {
-      const freed = ctx.db
+      const freed = await ctx.db
         .query(
           `UPDATE slots SET status = 'open', prev_hold_client_id = NULL, version = version + 1
            WHERE id = ? AND status = 'booked'`,
         )
         .run(booking.slot_id);
       if (freed.changes === 1) {
-        logEvent(ctx, { type: "slot_released", slotId: booking.slot_id, clientId: booking.client_id, actor: "system" });
+        await logEvent(ctx, { type: "slot_released", slotId: booking.slot_id, clientId: booking.client_id, actor: "system" });
       }
     }
+    return bookingDto(ctx, bookingId, policies);
   });
-  return bookingDto(ctx, bookingId);
 }
 
-export function myBookings(ctx: Ctx, clientId: string) {
-  sweepExpiredHolds(ctx);
-  const policies = getPolicies(ctx.db);
-  const rows = ctx.db
+export async function myBookings(ctx: Ctx, clientId: string) {
+  await sweepExpiredHolds(ctx);
+  const policies = await getPolicies(ctx.db);
+  const rows = await ctx.db
     .query(
       `SELECT b.*, s.start_at, s.end_at FROM bookings b JOIN slots s ON s.id = b.slot_id
        WHERE b.client_id = ? ORDER BY s.start_at ASC`,
@@ -551,7 +551,7 @@ export function myBookings(ctx: Ctx, clientId: string) {
     .filter(({ r }) => r.status === "cancelled" || r.start_at < nowIso)
     .map((x) => x.b)
     .reverse();
-  return { upcoming, past, hold: activeHold(ctx, clientId) };
+  return { upcoming, past, hold: await activeHold(ctx, clientId) };
 }
 
 // ---------------------------------------------------------------------------
@@ -595,16 +595,16 @@ function toAdminSlot(r: AdminRow): AdminSlot {
   };
 }
 
-function adminSlotById(ctx: Ctx, id: string): AdminSlot {
-  const r = ctx.db.query(`${ADMIN_SLOT_SQL} WHERE s.id = ?`).get(id) as AdminRow | null;
+async function adminSlotById(ctx: Ctx, id: string): Promise<AdminSlot> {
+  const r = await ctx.db.query(`${ADMIN_SLOT_SQL} WHERE s.id = ?`).get(id) as AdminRow | null;
   if (!r) fail("NOT_FOUND", "That time slot doesn't exist.");
   return toAdminSlot(r);
 }
 
-export function adminSchedule(ctx: Ctx, from: string, to: string): { slots: AdminSlot[]; stats: ScheduleStats } {
-  sweepExpiredHolds(ctx);
+export async function adminSchedule(ctx: Ctx, from: string, to: string): Promise<{ slots: AdminSlot[]; stats: ScheduleStats }> {
+  await sweepExpiredHolds(ctx);
   const range = clampRange(from, to);
-  const rows = ctx.db
+  const rows = await ctx.db
     .query(`${ADMIN_SLOT_SQL} WHERE s.start_at >= ? AND s.start_at < ? ORDER BY s.start_at ASC`)
     .all(range.from, range.to) as AdminRow[];
   const slots = rows.map(toAdminSlot);
@@ -625,12 +625,12 @@ export function adminSchedule(ctx: Ctx, from: string, to: string): { slots: Admi
   };
 }
 
-export function adminBlockSlot(ctx: Ctx, slotId: string, reason?: string): AdminSlot {
-  tx(ctx, () => {
-    sweepExpiredHolds(ctx);
-    const slot = getSlot(ctx, slotId);
+export async function adminBlockSlot(ctx: Ctx, slotId: string, reason?: string): Promise<AdminSlot> {
+  return tx(ctx, async (ctx) => {
+    await sweepExpiredHolds(ctx);
+    const slot = await getSlot(ctx, slotId);
     if (!slot) fail("NOT_FOUND", "That time slot doesn't exist.");
-    const res = ctx.db
+    const res = await ctx.db
       .query(
         `UPDATE slots SET status = 'blocked', block_reason = ?, version = version + 1
          WHERE id = ? AND status = 'open'`,
@@ -639,29 +639,29 @@ export function adminBlockSlot(ctx: Ctx, slotId: string, reason?: string): Admin
     if (res.changes !== 1) {
       fail("SLOT_UNAVAILABLE", "Only open slots can be blocked. This one is booked, held or already blocked.");
     }
-    logEvent(ctx, { type: "slot_blocked", slotId, actor: "therapist" });
+    await logEvent(ctx, { type: "slot_blocked", slotId, actor: "therapist" });
+    return adminSlotById(ctx, slotId);
   });
-  return adminSlotById(ctx, slotId);
 }
 
-export function adminUnblockSlot(ctx: Ctx, slotId: string): AdminSlot {
-  tx(ctx, () => {
-    const slot = getSlot(ctx, slotId);
+export async function adminUnblockSlot(ctx: Ctx, slotId: string): Promise<AdminSlot> {
+  return tx(ctx, async (ctx) => {
+    const slot = await getSlot(ctx, slotId);
     if (!slot) fail("NOT_FOUND", "That time slot doesn't exist.");
-    const res = ctx.db
+    const res = await ctx.db
       .query(
         `UPDATE slots SET status = 'open', block_reason = NULL, prev_hold_client_id = NULL, version = version + 1
          WHERE id = ? AND status = 'blocked'`,
       )
       .run(slotId);
     if (res.changes !== 1) fail("INVALID_STATE", "That slot isn't blocked.");
-    logEvent(ctx, { type: "slot_released", slotId, actor: "therapist" });
+    await logEvent(ctx, { type: "slot_released", slotId, actor: "therapist" });
+    return adminSlotById(ctx, slotId);
   });
-  return adminSlotById(ctx, slotId);
 }
 
-export function adminClients(ctx: Ctx) {
-  const rows = ctx.db
+export async function adminClients(ctx: Ctx) {
+  const rows = await ctx.db
     .query(
       `SELECT c.*,
          (SELECT COUNT(*) FROM bookings b JOIN slots s ON s.id = b.slot_id
@@ -674,8 +674,8 @@ export function adminClients(ctx: Ctx) {
   return rows.map((r) => ({ ...toClient(r), upcomingCount: r.upcoming, totalSessions: r.total }));
 }
 
-export function adminEvents(ctx: Ctx, limit = 50) {
-  const rows = ctx.db
+export async function adminEvents(ctx: Ctx, limit = 50) {
+  const rows = await ctx.db
     .query(
       `SELECT e.*, s.start_at AS slot_start, c.id AS c_id, c.contact AS c_contact, c.contact_type AS c_type,
          c.name AS c_name, c.created_at AS c_created
